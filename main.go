@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -19,15 +20,15 @@ var rnd *renderer.Render
 var db *mgo.Database
 
 const (
-	hostName   string = "localhost:27017"
-	dbName     string = "demo_todo"
-	collection string = "todo"
-	port       string = ":9000"
+	hostName       string = "localhost:27017"
+	dbName         string = "demo_todo"
+	collectionName string = "todo"
+	port           string = ":9000"
 )
 
 type (
 	todoModel struct {
-		ID         bson.Objectid `bson:"_id,omitempty"`
+		ID         bson.ObjectId `bson:"_id,omitempty"`
 		Title      string        `bson:"title"`
 		Completed  bool          `bson:"completed"`
 		creadtedAt time.Time     `bson:"createdAt"`
@@ -36,7 +37,7 @@ type (
 	todo struct {
 		ID        string    `json:"id"`
 		Title     string    `json:"title"`
-		Completed string    `json:"completed"`
+		Completed bool      `json:"completed"`
 		createdAt time.Time `json:"created_at"`
 	}
 )
@@ -52,26 +53,67 @@ func init() {
 	db = sess.DB(dbName)
 }
 
-func homeHandler(w http.ResponseWriter,r *http.Request){
-	err : rnd.Template(w, http.StatusOK, []string("static/home.tpl"))
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	err := rnd.Template(w, http.StatusOK, []string{"static/home.tpl"}, nil)
 	checkErr(err)
 }
 
-func fetchTodo(w http.ResponseWriter,r *http.Request){
-	todos := []todoModel{}
-	if err != db.C(collectionName).Find(bson.M{}).All(&todo); err!=nil{
+func createTodo(w http.ResponseWriter, r *http.Request) {
+	var t todo
+
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		rnd.JSON(w, http.StatusProcessing, err)
+		return
+	}
+
+	//simple validation request the user has sent has a title or not
+
+	if t.Title == "" {
+		rnd.JSON(w, http.StatusBadRequest, renderer.M{
+			"message": "the title feild is required.",
+		})
+		return
+	}
+
+	// start creating a todo model, we want to prep up the model for it to sent it to the database
+
+	tm := todoModel{
+		ID:        bson.NewObjectId(),
+		Title:     t.Title,
+		Completed: false,
+		CreatedAt: time.Now(),
+	}
+
+	if err := db.C(collectionName).Insert(&tm); err != nil {
 		rnd.JSON(w, http.StatusProcessing, renderer.M{
-			"message":"Failed to fetch todo",
-			"error": err,
+			"message": "Failed to save todo",
+			"error":   err,
+		})
+		return
+	}
+
+	rnd.JSON(w, http.StatusCreated, renderer.M{
+		"message": "Todo created successfully",
+		"todo_id": tm.ID.Hex(),
+	})
+
+}
+
+func fetchTodo(w http.ResponseWriter, r *http.Request) {
+	todos := []todoModel{}
+	if err := db.C(collectionName).Find(bson.M{}).All(&todos); err != nil {
+		rnd.JSON(w, http.StatusProcessing, renderer.M{
+			"message": "Failed to fetch todo",
+			"error":   err,
 		})
 		return
 	}
 	todoList := []todo{}
 
-	for _, t := range todos{
+	for _, t := range todos {
 		todoList = append(todoList, todo{
-			ID: t.ID.Hex(),
-			Title: t.Title,
+			ID:        t.ID.Hex(),
+			Title:     t.Title,
 			Completed: t.Completed,
 			createdAt: t.creadtedAt,
 		})
@@ -99,7 +141,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-
 	//thi is a channel which will start our server
 	//listeandserver function is inside http package, helps us to create a server
 	go func() {
@@ -109,13 +150,12 @@ func main() {
 		}
 	}()
 
-	<- stopChan
+	<-stopChan
 	log.Println("shutting down the function")
-	ctx, cancel := context.WithTimeout(context.Background(),5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	srv.Shutdown(ctx)
-	defer cancel(
-		log.Println("server gracefully stopped")
-	)
+	defer cancel()
+	log.Println("server gracefully stopped")
 }
 
 func todoHandler() http.Handler {
