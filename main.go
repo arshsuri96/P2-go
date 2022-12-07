@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -78,10 +79,10 @@ func createTodo(w http.ResponseWriter, r *http.Request) {
 	// start creating a todo model, we want to prep up the model for it to sent it to the database
 
 	tm := todoModel{
-		ID:        bson.NewObjectId(),
-		Title:     t.Title,
-		Completed: false,
-		CreatedAt: time.Now(),
+		ID:         bson.NewObjectId(),
+		Title:      t.Title,
+		Completed:  false,
+		creadtedAt: time.Now(),
 	}
 
 	if err := db.C(collectionName).Insert(&tm); err != nil {
@@ -97,6 +98,69 @@ func createTodo(w http.ResponseWriter, r *http.Request) {
 		"todo_id": tm.ID.Hex(),
 	})
 
+}
+func updateTodo(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+
+	if !bson.IsObjectIdHex(id) {
+		rnd.JSON(w, http.StatusBadRequest, renderer.M{
+			"message": "this is in invadlid",
+		})
+		return
+	}
+
+	var t todo
+
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		rnd.JSON(w, http.StatusProcessing, err)
+		return
+	}
+
+	if t.Title == "" {
+		rnd.JSON(w, http.StatusBadRequest, renderer.M{
+			"message": "The title field is requried",
+		})
+		return
+	}
+
+	// if input is okay, update a todo
+	if err := db.C(collectionName).
+		Update(
+			bson.M{"_id": bson.ObjectIdHex(id)},
+			bson.M{"title": t.Title, "completed": t.Completed},
+		); err != nil {
+		rnd.JSON(w, http.StatusProcessing, renderer.M{
+			"message": "Failed to update todo",
+			"error":   err,
+		})
+		return
+	}
+
+	rnd.JSON(w, http.StatusOK, renderer.M{
+		"message": "Todo updated successfully",
+	})
+}
+
+func deleteTodo(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+
+	if !bson.IsObjectIdHex(id) {
+		rnd.JSON(w, http.StatusBadRequest, renderer.M{
+			"message": "ID is invaled",
+		})
+		return
+	}
+
+	if err := db.C(collectionName).RemoveId(bson.ObjectIdHex(id)); err != nil {
+		rnd.JSON(w, http.StatusProcessing, renderer.M{
+			"message": "Failed to delete",
+			"error":   err,
+		})
+		return
+	}
+	rnd.JSON(w, http.StatusOK, renderer.M{
+		"message": "todo deleteld successfully",
+	})
 }
 
 func fetchTodo(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +225,7 @@ func main() {
 func todoHandler() http.Handler {
 	rg := chi.NewRouter()
 	rg.Group(func(r chi.Router) {
-		r.Get("/", fetchTodos)
+		r.Get("/", fetchTodo)
 		r.Post("/", createTodo)
 		r.Put("/", updateTodo)
 		r.Delete("/(id)", deleteTodo)
